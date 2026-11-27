@@ -14,7 +14,7 @@ const STORAGE_RECENT_KEY = 'nextbus_sg_recent_v1';
 const STORAGE_ACTIVE_STOP_KEY = 'nextbus_sg_active_stop_v1';
 const STORAGE_PINNED_SERVICES_KEY = 'nextbus_sg_pinned_services_v1';
 
-const REFRESH_INTERVAL_SEC = 15;
+const REFRESH_INTERVAL_SEC = 20;
 
 const DEFAULT_FAVORITES: FavoriteStop[] = [
   {

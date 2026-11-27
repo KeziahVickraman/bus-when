@@ -255,7 +255,7 @@ export function ArrivalBoard({
               {arrivalData.StopName}
             </h1>
 
-            <div className="pt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 tabular-nums">
+            <div className="pt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 tabular-nums">
               <span>Updated {updatedLabel}</span>
               <span aria-hidden="true">·</span>
               <span>
@@ -263,6 +263,20 @@ export function ArrivalBoard({
                   ? `Next update in ${secondsToNextRefresh}s`
                   : 'Auto-refresh paused'}
               </span>
+              <span aria-hidden="true">·</span>
+              {arrivalData.DataSource === 'live' ? (
+                <span className="font-medium text-emerald-700">Live LTA DataMall</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onOpenApiModal}
+                  className="font-medium text-blue-700 hover:underline underline-offset-2"
+                >
+                  {arrivalData.DataSource === 'error'
+                    ? 'LTA API notice'
+                    : 'Sample preview (connect LTA key)'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -384,15 +398,45 @@ export function ArrivalBoard({
         )}
       </div>
 
-      {/* Custom / Outside-Directory Stop State */}
-      {!arrivalData.IsKnownStop ? (
+      {/* Error / Custom Stop / Empty State */}
+      {arrivalData.DataSource === 'error' ? (
         <div className="p-8 sm:p-10 text-center space-y-4">
           <div className="space-y-1.5 max-w-md mx-auto">
             <h2 className="font-display text-lg font-bold text-slate-900">
-              Stop {arrivalData.BusStopCode} ready for live API connection
+              Unable to load live arrivals for {arrivalData.BusStopCode}
             </h2>
             <p className="text-sm text-slate-600 leading-relaxed">
-              This 5-digit bus stop code is not in the offline sample directory yet. You can still save it to Favorites now, and live arrivals will load automatically once you connect your LTA DataMall API key.
+              {arrivalData.ErrorMessage ||
+                'LTA DataMall returned an error for this request. Verify your LTA_ACCOUNT_KEY and stop code.'}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+            <button
+              type="button"
+              onClick={onManualRefresh}
+              className="px-4 py-2 min-h-[40px] bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              Retry Request
+            </button>
+            <button
+              type="button"
+              onClick={onOpenApiModal}
+              className="px-4 py-2 min-h-[40px] bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 text-sm font-medium rounded-lg transition-colors"
+            >
+              Check API Health
+            </button>
+          </div>
+        </div>
+      ) : !arrivalData.IsKnownStop ? (
+        <div className="p-8 sm:p-10 text-center space-y-4">
+          <div className="space-y-1.5 max-w-md mx-auto">
+            <h2 className="font-display text-lg font-bold text-slate-900">
+              Stop {arrivalData.BusStopCode} awaiting LTA_ACCOUNT_KEY
+            </h2>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              This 5-digit bus stop code is outside the offline sample directory. Add your{' '}
+              <span className="font-mono text-xs">LTA_ACCOUNT_KEY</span> environment secret to
+              fetch live LTA DataMall arrivals for any bus stop in Singapore.
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
@@ -401,7 +445,7 @@ export function ArrivalBoard({
               onClick={onOpenApiModal}
               className="px-4 py-2 min-h-[40px] bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg transition-colors"
             >
-              View API Integration Guide
+              View API Setup
             </button>
             <button
               type="button"
@@ -411,6 +455,15 @@ export function ArrivalBoard({
               Load Sample Stop 01012
             </button>
           </div>
+        </div>
+      ) : arrivalData.Services.length === 0 ? (
+        <div className="p-8 text-center space-y-2">
+          <p className="text-sm font-semibold text-slate-900">
+            No active bus arrivals at Stop {arrivalData.BusStopCode}
+          </p>
+          <p className="text-xs text-slate-500">
+            LTA DataMall returned no scheduled buses currently operating at this stop.
+          </p>
         </div>
       ) : displayedServices.length === 0 ? (
         <div className="p-8 text-center space-y-3">

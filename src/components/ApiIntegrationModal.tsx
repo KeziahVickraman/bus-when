@@ -1,5 +1,6 @@
 import { Code2, X } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { ApiHealthStatus, checkApiHealth } from '../services/busArrivalService';
 
 interface ApiIntegrationModalProps {
   isOpen: boolean;
@@ -7,8 +8,16 @@ interface ApiIntegrationModalProps {
 }
 
 export function ApiIntegrationModal({ isOpen, onClose }: ApiIntegrationModalProps) {
+  const [health, setHealth] = useState<ApiHealthStatus | null>(null);
+  const [checking, setChecking] = useState(false);
+
   useEffect(() => {
     if (!isOpen) return;
+    setChecking(true);
+    void checkApiHealth()
+      .then((res) => setHealth(res))
+      .finally(() => setChecking(false));
+
     function handleKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
     }
@@ -34,7 +43,7 @@ export function ApiIntegrationModal({ isOpen, onClose }: ApiIntegrationModalProp
           <div className="flex items-center gap-2.5">
             <Code2 className="w-5 h-5 text-blue-700" aria-hidden="true" />
             <h2 id="api-modal-title" className="font-display text-lg font-bold text-slate-900">
-              LTA DataMall API Adapter
+              LTA DataMall v3 Serverless Connection
             </h2>
           </div>
           <button
@@ -48,40 +57,54 @@ export function ApiIntegrationModal({ isOpen, onClose }: ApiIntegrationModalProp
         </div>
 
         <div className="p-6 space-y-5 text-sm text-slate-700 max-h-[75vh] overflow-y-auto">
-          <p className="leading-relaxed">
-            This frontend uses the exact Singapore LTA DataMall Bus Arrival v3 data structure
-            (<span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">NextBus</span>,{' '}
-            <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">Load</span>,{' '}
-            <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">Feature</span>,{' '}
-            <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">Type</span>)
-            inside <span className="font-mono text-xs text-slate-900">src/services/busArrivalService.ts</span>.
-          </p>
-
-          <div className="space-y-2">
-            <h3 className="font-display text-sm font-semibold text-slate-900">
-              01. Recommended Backend Proxy Route
-            </h3>
-            <p className="text-slate-600">
-              Keep your <span className="font-mono text-xs">LTA_ACCOUNT_KEY</span> on a backend
-              endpoint (e.g. Express <span className="font-mono text-xs">/api/bus-arrivals</span>)
-              to avoid exposing credentials or hitting browser CORS restrictions:
-            </p>
-            <pre className="p-4 rounded-xl bg-slate-900 text-slate-100 font-mono text-xs overflow-x-auto leading-relaxed">
-{`GET https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival?BusStopCode=01012
-Headers:
-  AccountKey: process.env.LTA_ACCOUNT_KEY
-  accept: application/json`}
-            </pre>
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+            <div className="text-xs font-semibold text-slate-500">
+              Server Health (/api/health)
+            </div>
+            {checking ? (
+              <p className="text-sm text-slate-700">Checking serverless endpoint...</p>
+            ) : health ? (
+              <p className="text-sm text-slate-900">
+                Endpoint reachable ·{' '}
+                <span
+                  className={
+                    health.ltaConfigured
+                      ? 'font-semibold text-emerald-700'
+                      : 'font-semibold text-amber-700'
+                  }
+                >
+                  {health.ltaConfigured
+                    ? 'LTA_ACCOUNT_KEY configured'
+                    : 'LTA_ACCOUNT_KEY not set yet (using sample preview for directory stops)'}
+                </span>
+              </p>
+            ) : (
+              <p className="text-sm text-red-700">Unable to reach /api/health endpoint.</p>
+            )}
           </div>
 
           <div className="space-y-2">
             <h3 className="font-display text-sm font-semibold text-slate-900">
-              02. Swap In Live Fetch
+              01. Serverless Endpoints Created
             </h3>
-            <p className="text-slate-600">
-              Update <span className="font-mono text-xs">fetchBusStopArrivals(busStopCode)</span> in{' '}
-              <span className="font-mono text-xs">src/services/busArrivalService.ts</span> to call
-              your proxy endpoint and return the mapped <span className="font-mono text-xs">BusArrivalResponse</span>.
+            <ul className="space-y-1.5 text-slate-600 font-mono text-xs">
+              <li>GET /api/health — health & key configuration check</li>
+              <li>GET /api/busarrival?BusStopCode=04121&amp;ServiceNo=7 — LTA DataMall v3 proxy</li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="font-display text-sm font-semibold text-slate-900">
+              02. Add Your LTA_ACCOUNT_KEY Secret
+            </h3>
+            <p className="text-slate-600 leading-relaxed">
+              No API keys are hardcoded in the repository. Add your LTA DataMall key as{' '}
+              <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">
+                LTA_ACCOUNT_KEY
+              </span>{' '}
+              in your environment secrets (or local <span className="font-mono text-xs">.env</span>{' '}
+              file), and <span className="font-mono text-xs">/api/busarrival.ts</span> will pass it
+              server-side via the <span className="font-mono text-xs">AccountKey</span> header.
             </p>
           </div>
         </div>

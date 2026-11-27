@@ -6,20 +6,41 @@ import {
   BusType,
   LoadStatus,
   NextBusInfo,
+  OperatorCode,
 } from '../types/bus';
 
-/**
- * Frontend Bus Arrival Service Layer
- * ----------------------------------
- * Currently powered by deterministic live-ticking frontend simulation data
- * matching Singapore LTA DataMall Bus Arrival v3 response shapes.
- *
- * When ready to connect your backend proxy / LTA DataMall API:
- * 1. Replace `fetchBusStopArrivals` implementation with:
- *      const res = await fetch(`/api/bus-arrivals?BusStopCode=${encodeURIComponent(busStopCode)}`);
- *      return res.json();
- * 2. Keep all UI components untouched — they consume `BusArrivalResponse`.
- */
+interface LtaNextBusRaw {
+  OriginCode?: string;
+  DestinationCode?: string;
+  EstimatedArrival?: string;
+  Monitored?: 0 | 1;
+  Latitude?: string;
+  Longitude?: string;
+  VisitNumber?: string;
+  Load?: LoadStatus;
+  Feature?: 'WAB' | '';
+  Type?: BusType;
+}
+
+interface LtaServiceRaw {
+  ServiceNo?: string;
+  Operator?: OperatorCode;
+  NextBus?: LtaNextBusRaw;
+  NextBus2?: LtaNextBusRaw;
+  NextBus3?: LtaNextBusRaw;
+}
+
+interface LtaBusArrivalPayload {
+  BusStopCode?: string;
+  Services?: LtaServiceRaw[];
+}
+
+export interface ApiHealthStatus {
+  status: string;
+  service: string;
+  ltaConfigured: boolean;
+  timestamp: string;
+}
 
 function hashString(str: string): number {
   let hash = 2166136261;
@@ -46,7 +67,6 @@ function getBusType(preferred: Exclude<BusType, ''>, seed: number, slot: number)
 
 function buildNextBus(
   busStopCode: string,
-  serviceNo: string,
   etaDate: Date,
   load: LoadStatus,
   busType: BusType
@@ -62,6 +82,21 @@ function buildNextBus(
     Load: load,
     Feature: 'WAB',
     Type: busType,
+  };
+}
+
+function normalizeNextBus(raw: LtaNextBusRaw | undefined, fallbackStopCode: string): NextBusInfo {
+  return {
+    OriginCode: raw?.OriginCode ?? fallbackStopCode,
+    DestinationCode: raw?.DestinationCode ?? '',
+    EstimatedArrival: raw?.EstimatedArrival ?? '',
+    Monitored: raw?.Monitored === 1 ? 1 : 0,
+    Latitude: raw?.Latitude ?? '',
+    Longitude: raw?.Longitude ?? '',
+    VisitNumber: raw?.VisitNumber ?? '1',
+    Load: raw?.Load ?? '',
+    Feature: raw?.Feature === 'WAB' ? 'WAB' : '',
+    Type: raw?.Type ?? '',
   };
 }
 
@@ -100,24 +135,21 @@ export function searchBusStops(query: string): BusStopDirectoryEntry[] {
   });
 }
 
-export async function fetchBusStopArrivals(
-  busStopCode: string,
-  now: Date = new Date()
-): Promise<BusArrivalResponse> {
-  // Subtle realistic async delay so loading states & spinners behave identically to live API calls
-  await new Promise((resolve) => setTimeout(resolve, 140));
-
-  const cleanCode = busStopCode.trim();
-  const directoryStop = getBusStopByCode(cleanCode);
+function buildDirectoryPreview(
+  cleanCode: string,
+  directoryStop: BusStopDirectoryEntry | undefined,
+  now: Date
+): BusArrivalResponse {
   const nowMs = now.getTime();
 
   if (!directoryStop) {
     return {
       BusStopCode: cleanCode,
       StopName: `Bus Stop ${cleanCode}`,
-      RoadName: 'Custom Stop Code Lookup',
+      RoadName: 'Awaiting LTA_ACCOUNT_KEY',
       Region: 'Central',
       IsKnownStop: false,
+      DataSource: 'unconfigured',
       LastUpdated: now.toISOString(),
       Services: [],
     };
@@ -132,10 +164,6 @@ export async function fetchBusStopArrivals(
       nowMs
     );
 
-    const d1 = new Date(nowMs + eta1 * 60_000);
-    const d2 = new Date(nowMs + eta2 * 60_000);
-    const d3 = new Date(nowMs + eta3 * 60_000);
-
     return {
       ServiceNo: svc.ServiceNo,
       Operator: svc.Operator,
@@ -143,29 +171,25 @@ export async function fetchBusStopArrivals(
       UpcomingStops: svc.UpcomingStops,
       NextBus: buildNextBus(
         cleanCode,
-        svc.ServiceNo,
-        d1,
+        new Date(nowMs + eta1 * 60_000),
         getLoadForOffset(seed, eta1),
         getBusType(svc.PreferredType, seed, 1)
       ),
       NextBus2: buildNextBus(
         cleanCode,
-        svc.ServiceNo,
-        d2,
+        new Date(nowMs + eta2 * 60_000),
         getLoadForOffset(seed, eta2),
         getBusType(svc.PreferredType, seed, 2)
       ),
       NextBus3: buildNextBus(
         cleanCode,
-        svc.ServiceNo,
-        d3,
+        new Date(nowMs + eta3 * 60_000),
         getLoadForOffset(seed, eta3),
         getBusType(svc.PreferredType, seed, 3)
       ),
     };
   });
 
-  // Sort ascending by soonest arrival time, matching commuter expectations
   services.sort(
     (a, b) =>
       new Date(a.NextBus.EstimatedArrival).getTime() -
@@ -178,9 +202,122 @@ export async function fetchBusStopArrivals(
     RoadName: directoryStop.RoadName,
     Region: directoryStop.Region,
     IsKnownStop: true,
+    DataSource: 'preview',
     LastUpdated: now.toISOString(),
     Services: services,
   };
+}
+
+function mapLtaPayloadToArrivalResponse(
+  cleanCode: string,
+  payload: LtaBusArrivalPayload,
+  directoryStop: BusStopDirectoryEntry | undefined,
+  now: Date
+): BusArrivalResponse {
+  const rawServices = Array.isArray(payload.Services) ? payload.Services : [];
+
+  const services: BusServiceArrival[] = rawServices.map((raw) => {
+    const serviceNo = raw.ServiceNo ?? '';
+    const directorySvc = directoryStop?.Services.find(
+      (item) => item.ServiceNo.toLowerCase() === serviceNo.toLowerCase()
+    );
+    const nextBus = normalizeNextBus(raw.NextBus, cleanCode);
+    const destStop = nextBus.DestinationCode
+      ? getBusStopByCode(nextBus.DestinationCode)
+      : undefined;
+
+    const destinationLabel =
+      directorySvc?.DestinationName ??
+      destStop?.Description ??
+      (nextBus.DestinationCode ? `Stop ${nextBus.DestinationCode}` : 'Terminus');
+
+    return {
+      ServiceNo: serviceNo,
+      Operator: raw.Operator ?? directorySvc?.Operator ?? 'SBST',
+      DestinationName: destinationLabel,
+      UpcomingStops: directorySvc?.UpcomingStops,
+      NextBus: nextBus,
+      NextBus2: normalizeNextBus(raw.NextBus2, cleanCode),
+      NextBus3: normalizeNextBus(raw.NextBus3, cleanCode),
+    };
+  });
+
+  services.sort((a, b) => {
+    const aTime = a.NextBus.EstimatedArrival
+      ? new Date(a.NextBus.EstimatedArrival).getTime()
+      : Number.MAX_SAFE_INTEGER;
+    const bTime = b.NextBus.EstimatedArrival
+      ? new Date(b.NextBus.EstimatedArrival).getTime()
+      : Number.MAX_SAFE_INTEGER;
+    return aTime - bTime;
+  });
+
+  return {
+    BusStopCode: payload.BusStopCode ?? cleanCode,
+    StopName: directoryStop?.Description ?? `Bus Stop ${cleanCode}`,
+    RoadName: directoryStop?.RoadName ?? 'Live LTA DataMall Stop',
+    Region: directoryStop?.Region ?? 'Central',
+    IsKnownStop: true,
+    DataSource: 'live',
+    LastUpdated: now.toISOString(),
+    Services: services,
+  };
+}
+
+export async function checkApiHealth(): Promise<ApiHealthStatus | null> {
+  try {
+    const res = await fetch('/api/health');
+    if (!res.ok) return null;
+    return (await res.json()) as ApiHealthStatus;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchBusStopArrivals(
+  busStopCode: string,
+  now: Date = new Date(),
+  serviceNo?: string
+): Promise<BusArrivalResponse> {
+  const cleanCode = busStopCode.trim();
+  const directoryStop = getBusStopByCode(cleanCode);
+
+  const params = new URLSearchParams({ BusStopCode: cleanCode });
+  if (serviceNo?.trim()) {
+    params.set('ServiceNo', serviceNo.trim());
+  }
+
+  try {
+    const response = await fetch(`/api/busarrival?${params.toString()}`);
+
+    if (response.ok) {
+      const payload = (await response.json()) as LtaBusArrivalPayload;
+      return mapLtaPayloadToArrivalResponse(cleanCode, payload, directoryStop, now);
+    }
+
+    const errorBody = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      message?: string;
+    };
+
+    if (response.status === 503 && errorBody.error === 'LTA_ACCOUNT_KEY_MISSING') {
+      return buildDirectoryPreview(cleanCode, directoryStop, now);
+    }
+
+    return {
+      BusStopCode: cleanCode,
+      StopName: directoryStop?.Description ?? `Bus Stop ${cleanCode}`,
+      RoadName: directoryStop?.RoadName ?? 'Singapore Bus Stop',
+      Region: directoryStop?.Region ?? 'Central',
+      IsKnownStop: Boolean(directoryStop),
+      DataSource: 'error',
+      ErrorMessage: errorBody.message ?? 'Unable to load arrivals from LTA DataMall.',
+      LastUpdated: now.toISOString(),
+      Services: [],
+    };
+  } catch {
+    return buildDirectoryPreview(cleanCode, directoryStop, now);
+  }
 }
 
 export function formatMinutesAway(isoTimestamp: string, nowMs: number = Date.now()): {
@@ -193,6 +330,9 @@ export function formatMinutesAway(isoTimestamp: string, nowMs: number = Date.now
     return { minutes: -1, label: '—', isArriving: false, clockTime: '--:--' };
   }
   const target = new Date(isoTimestamp);
+  if (Number.isNaN(target.getTime())) {
+    return { minutes: -1, label: '—', isArriving: false, clockTime: '--:--' };
+  }
   const diffMin = Math.max(0, Math.round((target.getTime() - nowMs) / 60_000));
   const clockTime = target.toLocaleTimeString('en-SG', {
     hour: '2-digit',

@@ -31,12 +31,16 @@ export interface BusServiceArrival {
   NextBus3: NextBusInfo;
 }
 
+export type DataSourceMode = 'live' | 'preview' | 'unconfigured' | 'error';
+
 export interface BusArrivalResponse {
   BusStopCode: string;
   StopName: string;
   RoadName: string;
   Region: SingaporeRegion;
   IsKnownStop: boolean;
+  DataSource: DataSourceMode;
+  ErrorMessage?: string;
   LastUpdated: string;
   Services: BusServiceArrival[];
 }
